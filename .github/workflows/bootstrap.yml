@@ -57,6 +57,8 @@ jobs:
       REPO: ${{ github.repository }}
     steps:
       - name: Enable GitHub Pages (built by this repo's own workflow)
+        id: pages
+        continue-on-error: true
         run: |
           if gh api "repos/$REPO/pages" >/dev/null 2>&1; then
             echo "Pages is already enabled — nothing to do."
@@ -65,10 +67,12 @@ jobs:
           else
             echo "::error::Could not enable GitHub Pages via the API — GITHUB_TOKEN lacks permission here. Enable it yourself with one command:"
             echo "::error::gh api -X POST repos/$REPO/pages -f build_type=workflow"
-            echo "manual_pages=true" >> "$GITHUB_OUTPUT"
+            exit 1
           fi
 
       - name: Create the main branch ruleset
+        id: ruleset
+        continue-on-error: true
         run: |
           existing_id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name=="main-requires-pr") | .id' 2>/dev/null || true)
           if [ -n "$existing_id" ]; then
@@ -117,27 +121,35 @@ jobs:
           else
             echo "::error::Could not create the branch ruleset via the API — GITHUB_TOKEN lacks permission here. Create it yourself:"
             echo "::error::gh api -X POST repos/$REPO/rulesets --input ruleset.json   (see the JSON in .github/workflows/bootstrap.yml, or README.md)"
+            exit 1
           fi
 
       - name: Enable auto-merge and delete-branch-on-merge
+        id: settings
+        continue-on-error: true
         run: |
           if gh api -X PATCH "repos/$REPO" -f allow_auto_merge=true -F delete_branch_on_merge=true >/dev/null; then
             echo "allow_auto_merge and delete_branch_on_merge enabled."
           else
             echo "::error::Could not update repository settings via the API. Enable yourself:"
             echo "::error::gh api -X PATCH repos/$REPO -f allow_auto_merge=true -F delete_branch_on_merge=true"
+            exit 1
           fi
 
       - name: Enable Dependabot security updates
+        id: secfixes
+        continue-on-error: true
         run: |
           if gh api -X PUT "repos/$REPO/automated-security-fixes" >/dev/null; then
             echo "Dependabot automated security fixes enabled."
           else
             echo "::error::Could not enable Dependabot security updates via the API. Enable yourself:"
             echo "::error::gh api -X PUT repos/$REPO/automated-security-fixes"
+            exit 1
           fi
 
       - name: Verify visibility (CodeQL requires a public repo on this plan)
+        id: visibility
         run: |
           private=$(gh api "repos/$REPO" --jq .private)
           if [ "$private" = "true" ]; then
@@ -147,3 +159,13 @@ jobs:
             exit 1
           fi
           echo "Repository is public — CodeQL will run and can satisfy the required check."
+
+      - name: Fail loudly if anything needs a manual step
+        if: >-
+          steps.pages.outcome == 'failure' ||
+          steps.ruleset.outcome == 'failure' ||
+          steps.settings.outcome == 'failure' ||
+          steps.secfixes.outcome == 'failure'
+        run: |
+          echo "::error::This workflow run is being marked FAILED on purpose: at least one repository setting could not be configured automatically (GITHUB_TOKEN cannot manage repository administration — see the permissions: comment above) and needs the one-line command printed earlier in this log. Scroll up to the red ::error:: lines above, run the command(s) they show, then re-run this workflow from the Actions tab to confirm."
+          exit 1
