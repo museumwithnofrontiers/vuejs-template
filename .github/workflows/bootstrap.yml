@@ -12,6 +12,20 @@ name: Bootstrap repository settings
 # time from the Actions tab ("Run workflow") — for example if GITHUB_TOKEN
 # could not perform a step and you fixed it by hand and want to confirm the
 # rest still applies cleanly.
+#
+# There is deliberately no .github/workflows/codeql.yml here. This
+# organization enforces an org-wide CodeQL "default setup" that every new
+# repository gets automatically (confirmed empirically: a brand-new repo
+# already had `code-scanning/default-setup` in state "configured" before
+# this workflow ever ran) and that setting cannot be changed by a repo, or
+# even by a repo admin's token — the API refuses with "Code scanning default
+# setup cannot be modified. This setting is controlled by organization
+# administrators." GitHub also refuses to accept results from a custom
+# ("advanced") CodeQL workflow while default setup is enabled for the repo
+# ("CodeQL analyses from advanced configurations cannot be processed when
+# the default setup is enabled") — confirmed by actually running one and
+# watching it fail. So this template does not ship one; the required check
+# below is the default setup's own check run instead. See README.md.
 on:
   push:
     branches: [main]
@@ -91,7 +105,7 @@ jobs:
                 "parameters": {
                   "strict_required_status_checks_policy": false,
                   "required_status_checks": [
-                    { "context": "CodeQL", "integration_id": 15368 }
+                    { "context": "CodeQL", "integration_id": 57789 }
                   ]
                 }
               }

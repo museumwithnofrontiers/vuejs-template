@@ -2,8 +2,9 @@ name: CI
 
 # Every job here is intentionally informational, not a merge gate: each has
 # its own job so one red check never hides another, and none of them is
-# listed in the branch ruleset's required status checks. CodeQL (see
-# codeql.yml) is the only required check. See README.md for why.
+# listed in the branch ruleset's required status checks. CodeQL (the
+# organization's own enforced default code-scanning setup, not a workflow in
+# this repo — see bootstrap.yml and README.md) is the only required check.
 on:
   pull_request:
 

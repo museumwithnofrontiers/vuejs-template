@@ -54,6 +54,16 @@ setting it up (this takes under a minute):
    the project has none yet).
 4. One check is required: **CodeQL**, a security scan. Once it reports,
    you can merge your own pull request — no one else needs to approve it.
+   This scan is not a workflow in this repository — the
+   `museumwithnofrontiers` organization runs it automatically for every
+   repository ("default setup"), and individual repositories cannot turn it
+   off or replace it with their own. As shipped, it scans your GitHub
+   Actions workflow files, not your Vue/JavaScript code — if you want it to
+   scan your application code too, ask an organization owner to add
+   JavaScript/TypeScript to the organization's default code-scanning
+   configuration (Organization Settings → Code security → Configurations).
+   A repository admin cannot do this themselves; the API explicitly refuses
+   with "controlled by organization administrators."
 5. Merging into `main` automatically builds and publishes your site to
    GitHub Pages.
 
