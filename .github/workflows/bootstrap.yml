@@ -18,7 +18,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  administration: write
+  # NOTE: "administration" is NOT a valid key in this block at all — GitHub
+  # rejects the whole workflow file if it's present (confirmed empirically:
+  # `gh workflow run` returned "Unexpected value 'administration'"). There is
+  # no way to grant GITHUB_TOKEN repo-administration scope from workflow
+  # YAML, at any permission level. So the steps below that need it (creating
+  # the ruleset, enabling Pages) are attempted anyway and will most likely
+  # fail with 403 — each one falls back to printing the one-line `gh`
+  # command to run by hand. See README.md.
   pages: write
   contents: read
 
