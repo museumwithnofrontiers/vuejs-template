@@ -85,19 +85,31 @@ has_js=$(gh api "repos/$REPO/code-scanning/default-setup" --jq '.languages | ind
 if [ "$has_js" = "true" ]; then
   echo "[CodeQL]       already scans javascript-typescript -- nothing to do."
 else
-  gh api -X PATCH "repos/$REPO/code-scanning/default-setup" \
+  # Deliberately tolerant, unlike every other call in this script: on a
+  # freshly created repo the organization's own CodeQL default setup is busy
+  # auto-detecting languages at the same time, and GitHub answers this PATCH
+  # with a conflict while that's in flight. That isn't this script doing
+  # anything wrong, so it must not abort the run -- the final assertion loop
+  # below re-reads the language list for real and waits for it, so it alone
+  # decides whether the run succeeded.
+  if gh api -X PATCH "repos/$REPO/code-scanning/default-setup" \
     -f state=configured -f query_suite=extended \
-    -F 'languages[]=actions' -F 'languages[]=javascript-typescript' >/dev/null
-  echo "[CodeQL]       extended to scan javascript-typescript too (takes about a minute to take effect)."
+    -F 'languages[]=actions' -F 'languages[]=javascript-typescript' >/dev/null 2>&1; then
+    echo "[CodeQL]       extended to scan javascript-typescript too (takes about a minute to take effect)."
+  else
+    echo "[CodeQL]       could not update the scan configuration right now -- the organization's own scan setup may be updating this repository at the same time; the final check below will wait for it."
+  fi
 fi
 
 # Last step, on purpose -- and not a rubber stamp. set -e aborts on the
-# first real failure above, but a step could still have silently no-opped
-# against a state that was misread, so before promising anything we re-read
-# all six settings fresh and check them for real. GitHub's API can also
-# legitimately still be catching up with a change this very script just made
-# a moment ago (CodeQL's language list, extended above, is the one this
-# repeatedly shows up on) -- that isn't a failure, so the check below keeps
+# first real failure above -- except the CodeQL PATCH, which is
+# deliberately tolerant of failure, see the comment at that call -- but a
+# step could still have silently no-opped against a state that was
+# misread, so before promising anything we re-read all six settings fresh
+# and check them for real. GitHub's API can also legitimately still be
+# catching up with a change this very script just made a moment ago
+# (CodeQL's language list, extended above, is the one this repeatedly shows
+# up on) -- that isn't a failure, so the check below keeps
 # re-reading for a while before it gives up, rather than condemning a run
 # that actually did everything right. The "Verify repository settings"
 # workflow (.github/workflows/bootstrap.yml) cannot read allow_auto_merge,
