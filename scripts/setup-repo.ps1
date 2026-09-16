@@ -28,8 +28,9 @@ if (-not $pagesExists) {
     Write-Host "[Pages]        already enabled -- nothing to do."
 }
 
-$rulesetId = gh api "repos/$Repo/rulesets" --jq '.[] | select(.name=="main-requires-pr") | .id'
-if ([string]::IsNullOrEmpty($rulesetId)) {
+$rulesets = gh api "repos/$Repo/rulesets" | ConvertFrom-Json
+$existingRuleset = $rulesets | Where-Object { $_.name -eq "main-requires-pr" }
+if (-not $existingRuleset) {
     $rulesetJson = @'
 {
   "name": "main-requires-pr",
@@ -63,7 +64,12 @@ if ([string]::IsNullOrEmpty($rulesetId)) {
   ]
 }
 '@
-    $rulesetJson | gh api -X POST "repos/$Repo/rulesets" --input - *>$null
+    # Piping into `gh api --input -` over stdin is unreliable from PowerShell;
+    # write to a temp file and pass that instead.
+    $rulesetFile = New-TemporaryFile
+    Set-Content -Path $rulesetFile -Value $rulesetJson -NoNewline
+    gh api -X POST "repos/$Repo/rulesets" --input $rulesetFile *>$null
+    Remove-Item $rulesetFile -ErrorAction SilentlyContinue
     Write-Host "[Ruleset]      created: PR required, no review required, CodeQL required, force-push/deletion blocked."
 } else {
     Write-Host "[Ruleset]      already exists -- nothing to do."
