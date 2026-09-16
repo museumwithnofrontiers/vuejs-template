@@ -94,40 +94,69 @@ fi
 # Last step, on purpose -- and not a rubber stamp. set -e aborts on the
 # first real failure above, but a step could still have silently no-opped
 # against a state that was misread, so before promising anything we re-read
-# all six settings fresh and check them for real. The "Verify repository
-# settings" workflow (.github/workflows/bootstrap.yml) cannot read
-# allow_auto_merge, delete_branch_on_merge, Dependabot's security-fixes
-# setting, or CodeQL's language list under GITHUB_TOKEN -- three of those
-# reads 403 outright, and the other two fields are silently omitted from the
-# API response for a non-admin reader even when true. This marker stands in
-# for all three so that workflow can tell "verified done" from "never run"
-# -- so it must only be written when every assertion below actually passes.
+# all six settings fresh and check them for real. GitHub's API can also
+# legitimately still be catching up with a change this very script just made
+# a moment ago (CodeQL's language list, extended above, is the one this
+# repeatedly shows up on) -- that isn't a failure, so the check below keeps
+# re-reading for a while before it gives up, rather than condemning a run
+# that actually did everything right. The "Verify repository settings"
+# workflow (.github/workflows/bootstrap.yml) cannot read allow_auto_merge,
+# delete_branch_on_merge, Dependabot's security-fixes setting, or CodeQL's
+# language list under GITHUB_TOKEN -- three of those reads 403 outright, and
+# the other two fields are silently omitted from the API response for a
+# non-admin reader even when true. This marker stands in for all three so
+# that workflow can tell "verified done" from "never run" -- so it must only
+# be written when every assertion below actually passes.
+
+check_final_settings() {
+  # Re-reads all six settings fresh and (re-)populates the global
+  # "failures" array with what's still wrong (empty if everything checks
+  # out). Safe, cheap, and idempotent to call repeatedly -- that's the
+  # point.
+  failures=()
+
+  if ! gh api "repos/$REPO/pages" >/dev/null 2>&1; then
+    failures+=("Pages is not enabled.")
+  fi
+
+  if [ -z "$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name=="main-requires-pr") | .id')" ]; then
+    failures+=("Ruleset 'main-requires-pr' is missing.")
+  fi
+
+  current=$(gh api "repos/$REPO" --jq '"\(.allow_auto_merge) \(.delete_branch_on_merge)"')
+  if [ "$current" != "true true" ]; then
+    failures+=("allow_auto_merge and/or delete_branch_on_merge is not enabled.")
+  fi
+
+  if ! gh api "repos/$REPO/automated-security-fixes" --jq '.enabled' 2>/dev/null | grep -q true; then
+    failures+=("Dependabot security updates are not enabled.")
+  fi
+
+  has_js_final=$(gh api "repos/$REPO/code-scanning/default-setup" --jq '.languages | index("javascript-typescript") != null' 2>/dev/null || echo false)
+  if [ "$has_js_final" != "true" ]; then
+    failures+=("CodeQL default setup does not include javascript-typescript.")
+  fi
+}
+
 echo
 echo "Verifying final state before marking setup complete ..."
 
-failures=()
-
-if ! gh api "repos/$REPO/pages" >/dev/null 2>&1; then
-  failures+=("Pages is not enabled.")
-fi
-
-if [ -z "$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name=="main-requires-pr") | .id')" ]; then
-  failures+=("Ruleset 'main-requires-pr' is missing.")
-fi
-
-current=$(gh api "repos/$REPO" --jq '"\(.allow_auto_merge) \(.delete_branch_on_merge)"')
-if [ "$current" != "true true" ]; then
-  failures+=("allow_auto_merge and/or delete_branch_on_merge is not enabled.")
-fi
-
-if ! gh api "repos/$REPO/automated-security-fixes" --jq '.enabled' 2>/dev/null | grep -q true; then
-  failures+=("Dependabot security updates are not enabled.")
-fi
-
-has_js_final=$(gh api "repos/$REPO/code-scanning/default-setup" --jq '.languages | index("javascript-typescript") != null' 2>/dev/null || echo false)
-if [ "$has_js_final" != "true" ]; then
-  failures+=("CodeQL default setup does not include javascript-typescript.")
-fi
+# Give GitHub's side a chance to catch up rather than failing a run that
+# actually did everything right; a setting that is genuinely missing will
+# still be missing once this runs out, and gets reported below exactly as
+# before.
+deadline=$(( $(date -u +%s) + 90 ))
+poll_interval_seconds=5
+check_final_settings
+wait_message_shown=false
+while [ "${#failures[@]}" -gt 0 ] && [ "$(date -u +%s)" -lt "$deadline" ]; do
+  if [ "$wait_message_shown" = false ]; then
+    echo "Some settings (most often CodeQL's language list) can take a little while to catch up on GitHub's side after being set -- waiting and checking again, this is normal ..."
+    wait_message_shown=true
+  fi
+  sleep "$poll_interval_seconds"
+  check_final_settings
+done
 
 if [ "${#failures[@]}" -gt 0 ]; then
   echo

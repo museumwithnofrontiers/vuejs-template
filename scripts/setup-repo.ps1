@@ -163,7 +163,12 @@ if ($defaultSetup.languages -contains "javascript-typescript") {
 # partway (a real gh error now aborts immediately, per the helpers above,
 # but a step could also have silently no-opped against a state we
 # misread), so before promising anything we re-read all six settings fresh
-# and check them for real. The "Verify repository settings" workflow
+# and check them for real. GitHub's API can also legitimately still be
+# catching up with a change this very script just made a moment ago
+# (CodeQL's language list, extended above, is the one this repeatedly shows
+# up on) -- that isn't a failure, so the check below keeps re-reading for a
+# while before it gives up, rather than condemning a run that actually did
+# everything right. The "Verify repository settings" workflow
 # (.github/workflows/bootstrap.yml) cannot read allow_auto_merge,
 # delete_branch_on_merge, Dependabot's security-fixes setting, or CodeQL's
 # language list under GITHUB_TOKEN -- three of those reads 403 outright, and
@@ -171,29 +176,59 @@ if ($defaultSetup.languages -contains "javascript-typescript") {
 # non-admin reader even when true. This marker stands in for all three so
 # that workflow can tell "verified done" from "never run" -- so it must only
 # be written when every assertion below actually passes.
+
+function Test-FinalSettings {
+    # Re-reads all six settings fresh and returns the list of what's still
+    # wrong (empty if everything checks out). Safe, cheap, and idempotent to
+    # call repeatedly -- that's the point.
+    $failures = @()
+
+    $pagesFinal = Invoke-GhCheck @('api', "repos/$Repo/pages")
+    if (-not $pagesFinal.Success) { $failures += "Pages is not enabled." }
+
+    $rulesetsFinal = Invoke-GhRequired @('api', "repos/$Repo/rulesets") | ConvertFrom-Json
+    if (-not ($rulesetsFinal | Where-Object { $_.name -eq "main-requires-pr" })) {
+        $failures += "Ruleset 'main-requires-pr' is missing."
+    }
+
+    $repoInfoFinal = Invoke-GhRequired @('api', "repos/$Repo") | ConvertFrom-Json
+    if (-not $repoInfoFinal.allow_auto_merge) { $failures += "allow_auto_merge is not enabled." }
+    if (-not $repoInfoFinal.delete_branch_on_merge) { $failures += "delete_branch_on_merge is not enabled." }
+
+    $secFixesFinal = Invoke-GhRequired @('api', "repos/$Repo/automated-security-fixes") | ConvertFrom-Json
+    if (-not $secFixesFinal.enabled) { $failures += "Dependabot security updates are not enabled." }
+
+    $defaultSetupFinal = Invoke-GhRequired @('api', "repos/$Repo/code-scanning/default-setup") | ConvertFrom-Json
+    if ($defaultSetupFinal.languages -notcontains "javascript-typescript") {
+        $failures += "CodeQL default setup does not include javascript-typescript."
+    }
+
+    return $failures
+}
+
 Write-Host ""
 Write-Host "Verifying final state before marking setup complete ..."
 
-$failures = @()
-
-$pagesFinal = Invoke-GhCheck @('api', "repos/$Repo/pages")
-if (-not $pagesFinal.Success) { $failures += "Pages is not enabled." }
-
-$rulesetsFinal = Invoke-GhRequired @('api', "repos/$Repo/rulesets") | ConvertFrom-Json
-if (-not ($rulesetsFinal | Where-Object { $_.name -eq "main-requires-pr" })) {
-    $failures += "Ruleset 'main-requires-pr' is missing."
-}
-
-$repoInfoFinal = Invoke-GhRequired @('api', "repos/$Repo") | ConvertFrom-Json
-if (-not $repoInfoFinal.allow_auto_merge) { $failures += "allow_auto_merge is not enabled." }
-if (-not $repoInfoFinal.delete_branch_on_merge) { $failures += "delete_branch_on_merge is not enabled." }
-
-$secFixesFinal = Invoke-GhRequired @('api', "repos/$Repo/automated-security-fixes") | ConvertFrom-Json
-if (-not $secFixesFinal.enabled) { $failures += "Dependabot security updates are not enabled." }
-
-$defaultSetupFinal = Invoke-GhRequired @('api', "repos/$Repo/code-scanning/default-setup") | ConvertFrom-Json
-if ($defaultSetupFinal.languages -notcontains "javascript-typescript") {
-    $failures += "CodeQL default setup does not include javascript-typescript."
+# Give GitHub's side a chance to catch up rather than failing a run that
+# actually did everything right; a setting that is genuinely missing will
+# still be missing once this runs out, and gets reported below exactly as
+# before.
+$deadline = (Get-Date).AddSeconds(90)
+$pollIntervalSeconds = 5
+# The @(...) wrapper matters: on Windows PowerShell 5.1, a pipeline that
+# emits exactly one object collapses to a scalar on assignment (and zero
+# objects collapses to $null), which would make the .Count checks below
+# unreliable. @(...) forces a real array every time, regardless of how many
+# failures come back.
+$failures = @(Test-FinalSettings)
+$waitMessageShown = $false
+while ($failures.Count -gt 0 -and (Get-Date) -lt $deadline) {
+    if (-not $waitMessageShown) {
+        Write-Host "Some settings (most often CodeQL's language list) can take a little while to catch up on GitHub's side after being set -- waiting and checking again, this is normal ..."
+        $waitMessageShown = $true
+    }
+    Start-Sleep -Seconds $pollIntervalSeconds
+    $failures = @(Test-FinalSettings)
 }
 
 if ($failures.Count -gt 0) {
