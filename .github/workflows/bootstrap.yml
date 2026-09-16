@@ -1,65 +1,77 @@
-name: Bootstrap repository settings
+name: Verify repository settings
 
 # A repository created from this template inherits FILES ONLY. Branch
-# rulesets, Pages enablement, auto-merge and Dependabot security updates are
-# repository *settings*, which "Use this template" does not copy. This
-# workflow configures them via the API using the built-in GITHUB_TOKEN, so a
-# developer who is not comfortable with git setup does not have to.
+# rulesets, Pages enablement, auto-merge, Dependabot security updates, and
+# CodeQL's scanned-language list are repository *settings*, which "Use this
+# template" does not copy. GITHUB_TOKEN can never manage repository
+# administration -- no permission grants it that, at any level (confirmed
+# empirically: `gh workflow run` rejects "administration" as an unexpected
+# value the moment it appears in a `permissions:` block). So this workflow
+# does not attempt any of those changes itself; scripts/setup-repo.sh (or
+# .ps1) makes all five, once, as the developer, through their own `gh auth`
+# session. This workflow only VERIFIES that setup happened -- it is
+# read-only, on purpose, and changes nothing.
 #
-# It is idempotent: safe to re-run, and each step is a no-op if the setting
-# is already in place. It runs automatically on the first push (the commit
-# "Use this template" creates on a new repository), and can be re-run any
-# time from the Actions tab ("Run workflow") — for example if GITHUB_TOKEN
-# could not perform a step and you fixed it by hand and want to confirm the
-# rest still applies cleanly.
+# Three of the five settings cannot even be verified by reading, under
+# GITHUB_TOKEN: `repos/$REPO/automated-security-fixes` (Dependabot security
+# updates) and `repos/$REPO/code-scanning/default-setup` (CodeQL's scanned
+# languages) both require admin on the repo just to READ, so both calls 403
+# regardless of whether the setting is already correct. `allow_auto_merge`
+# and `delete_branch_on_merge` are worse: GitHub silently omits both fields
+# from the repository payload for a non-admin reader, even when they are
+# genuinely true, so there is no way to tell "true" from "never set" by
+# reading at all. An earlier version of this workflow "verified" all three
+# by attempting the same writes setup-repo.sh already made -- those writes
+# always 403 under GITHUB_TOKEN regardless of whether the setting was
+# already correct, so the run failed forever even after a developer did
+# everything right. Pure noise; removed.
+#
+# Instead, setup-repo.sh/.ps1 sets a repository variable
+# (VUEJS_TEMPLATE_SETUP_COMPLETE) to a timestamp as its LAST step, reached
+# only once every preceding step has succeeded (both scripts abort on their
+# first error). This workflow reads that variable -- the `vars` context
+# needs no permission grant -- as a stand-in for those three otherwise
+# unreadable settings.
+#
+# It is idempotent: safe to re-run any time from the Actions tab ("Run
+# workflow"), and it runs automatically on the first push (the commit "Use
+# this template" creates on a new repository) -- for example, re-run it
+# after running the setup script to confirm everything is now in place.
 #
 # There is deliberately no .github/workflows/codeql.yml here. This
 # organization enforces an org-wide CodeQL "default setup" that every new
 # repository gets automatically (confirmed empirically: a brand-new repo
 # already had `code-scanning/default-setup` in state "configured" before
 # this workflow ever ran). *Disabling* it, or switching a repo to a custom
-# ("advanced") workflow instead, is org-locked — the API refuses with "Code
+# ("advanced") workflow instead, is org-locked -- the API refuses with "Code
 # scanning default setup cannot be modified. This setting is controlled by
 # organization administrators.", and GitHub separately refuses to accept
 # results from an advanced workflow while default setup stays on ("CodeQL
 # analyses from advanced configurations cannot be processed when the default
-# setup is enabled") — both confirmed by actually hitting them. So this
+# setup is enabled") -- both confirmed by actually hitting them. So this
 # template does not ship a codeql.yml; the required check below is the
 # default setup's own check run instead.
 #
 # *Extending* default setup's language list, by contrast, is an ordinary
-# repo-admin operation, not org-locked — confirmed empirically (see the
-# "Extend CodeQL" step). As shipped, default setup only scans this repo's
-# GitHub Actions workflow files ("actions"); that step adds
-# javascript-typescript so it scans the application code too. See README.md.
+# repo-admin operation, not org-locked -- confirmed empirically. As shipped,
+# default setup only scans this repo's GitHub Actions workflow files
+# ("actions"); setup-repo.sh/.ps1 adds javascript-typescript so it scans the
+# application code too. See README.md.
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
 permissions:
-  # NOTE: "administration" is NOT a valid key in this block at all — GitHub
-  # rejects the whole workflow file if it's present (confirmed empirically:
-  # `gh workflow run` returned "Unexpected value 'administration'"). There is
-  # no way to grant GITHUB_TOKEN repo-administration scope from workflow
-  # YAML, at any permission level. So the steps below that need it (creating
-  # the ruleset, enabling Pages, repo settings, Dependabot security updates,
-  # extending CodeQL's languages) are attempted anyway and will most likely
-  # fail with 403 — if any of them do, the last step points you at
-  # scripts/setup-repo.sh (or .ps1), which does all of the same things as
-  # yourself instead, in one command. security-events: write is a real,
-  # grantable scope (unlike administration) and is enough for the
-  # CodeQL-language step to at least try.
-  pages: write
-  security-events: write
   contents: read
+  pages: read
 
 concurrency:
   group: bootstrap
   cancel-in-progress: false
 
 jobs:
-  bootstrap:
+  verify:
     # Never touch the template repository's own settings.
     if: ${{ !endsWith(github.repository, '/vuejs-template') }}
     runs-on: ubuntu-latest
@@ -67,136 +79,63 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
     steps:
-      - name: Enable GitHub Pages (built by this repo's own workflow)
+      - name: Verify GitHub Pages is enabled
         id: pages
         continue-on-error: true
         run: |
           if gh api "repos/$REPO/pages" >/dev/null 2>&1; then
-            echo "Pages is already enabled — nothing to do."
-          elif gh api -X POST "repos/$REPO/pages" -f build_type=workflow >/dev/null 2>&1; then
-            echo "Pages enabled with build_type=workflow."
+            echo "Pages is enabled."
           else
-            echo "::error::Could not enable GitHub Pages — GITHUB_TOKEN lacks permission here (expected, see README.md)."
+            echo "::error::GitHub Pages is not enabled yet."
             exit 1
           fi
 
-      - name: Create the main branch ruleset
+      - name: Verify the main branch ruleset exists
         id: ruleset
         continue-on-error: true
         run: |
           existing_id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name=="main-requires-pr") | .id' 2>/dev/null || true)
           if [ -n "$existing_id" ]; then
-            echo "Ruleset 'main-requires-pr' already exists (id $existing_id) — nothing to do."
-            exit 0
-          fi
-          cat > /tmp/ruleset.json <<'JSON'
-          {
-            "name": "main-requires-pr",
-            "target": "branch",
-            "enforcement": "active",
-            "conditions": {
-              "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] }
-            },
-            "rules": [
-              { "type": "deletion" },
-              { "type": "non_fast_forward" },
-              {
-                "type": "pull_request",
-                "parameters": {
-                  "required_approving_review_count": 0,
-                  "dismiss_stale_reviews_on_push": false,
-                  "required_reviewers": [],
-                  "require_code_owner_review": false,
-                  "dismissal_restriction": { "enabled": false, "allowed_actors": [] },
-                  "require_last_push_approval": false,
-                  "required_review_thread_resolution": false,
-                  "require_extra_approval_for_unattributed_changes": false,
-                  "allowed_merge_methods": ["merge", "squash", "rebase"]
-                }
-              },
-              {
-                "type": "required_status_checks",
-                "parameters": {
-                  "strict_required_status_checks_policy": false,
-                  "required_status_checks": [
-                    { "context": "CodeQL", "integration_id": 57789 }
-                  ]
-                }
-              }
-            ]
-          }
-          JSON
-          if gh api -X POST "repos/$REPO/rulesets" --input /tmp/ruleset.json >/dev/null; then
-            echo "Ruleset 'main-requires-pr' created: no direct pushes, PR required, no review required, CodeQL required, force-push and deletion blocked."
+            echo "Ruleset 'main-requires-pr' exists (id $existing_id)."
           else
-            echo "::error::Could not create the branch ruleset — GITHUB_TOKEN lacks permission here (expected, see README.md)."
-            exit 1
-          fi
-
-      - name: Enable auto-merge and delete-branch-on-merge
-        id: settings
-        continue-on-error: true
-        run: |
-          current=$(gh api "repos/$REPO" --jq '"\(.allow_auto_merge) \(.delete_branch_on_merge)"')
-          if [ "$current" = "true true" ]; then
-            echo "allow_auto_merge and delete_branch_on_merge are already enabled — nothing to do."
-          elif gh api -X PATCH "repos/$REPO" -f allow_auto_merge=true -F delete_branch_on_merge=true >/dev/null; then
-            echo "allow_auto_merge and delete_branch_on_merge enabled."
-          else
-            echo "::error::Could not update repository settings — GITHUB_TOKEN lacks permission here (expected, see README.md)."
-            exit 1
-          fi
-
-      - name: Enable Dependabot security updates
-        id: secfixes
-        continue-on-error: true
-        run: |
-          if gh api "repos/$REPO/automated-security-fixes" --jq '.enabled' 2>/dev/null | grep -q true; then
-            echo "Dependabot automated security fixes are already enabled — nothing to do."
-          elif gh api -X PUT "repos/$REPO/automated-security-fixes" >/dev/null; then
-            echo "Dependabot automated security fixes enabled."
-          else
-            echo "::error::Could not enable Dependabot security updates — GITHUB_TOKEN lacks permission here (expected, see README.md)."
-            exit 1
-          fi
-
-      - name: Extend CodeQL to also scan the application's JavaScript/TypeScript
-        id: codeql-langs
-        continue-on-error: true
-        run: |
-          current=$(gh api "repos/$REPO/code-scanning/default-setup" --jq '.languages | index("javascript-typescript") != null' 2>/dev/null || echo false)
-          if [ "$current" = "true" ]; then
-            echo "Default setup already scans javascript-typescript — nothing to do."
-          elif gh api -X PATCH "repos/$REPO/code-scanning/default-setup" \
-                 -f state=configured -f query_suite=extended \
-                 -F 'languages[]=actions' -F 'languages[]=javascript-typescript' >/dev/null; then
-            echo "CodeQL default setup extended to scan javascript-typescript too (can take about a minute to take effect)."
-          else
-            echo "::error::Could not extend CodeQL's language coverage — GITHUB_TOKEN lacks permission here (expected, see README.md)."
+            echo "::error::Ruleset 'main-requires-pr' does not exist yet."
             exit 1
           fi
 
       - name: Verify visibility (CodeQL requires a public repo on this plan)
         id: visibility
+        continue-on-error: true
         run: |
           private=$(gh api "repos/$REPO" --jq .private)
           if [ "$private" = "true" ]; then
             echo "::error::This repository is PRIVATE. On the museumwithnofrontiers organization's GitHub Free plan, CodeQL code scanning only runs on PUBLIC repositories. CodeQL is the only required check on main, so pull requests will NEVER be mergeable until this repository is public. Fix it with:"
             echo "::error::gh api -X PATCH repos/$REPO -f private=false"
-            echo "::error::(or Settings > General > Danger Zone > Change visibility). Everything else this workflow configured is still in place — re-run this workflow after switching to public if you want it to re-verify."
+            echo "::error::(or Settings > General > Danger Zone > Change repository visibility)."
             exit 1
           fi
-          echo "Repository is public — CodeQL will run and can satisfy the required check."
+          echo "Repository is public -- CodeQL will run and can satisfy the required check."
+
+      - name: Verify auto-merge, Dependabot security updates, and CodeQL language coverage were set up
+        id: setup-complete
+        continue-on-error: true
+        env:
+          SETUP_COMPLETE: ${{ vars.VUEJS_TEMPLATE_SETUP_COMPLETE }}
+        run: |
+          if [ -n "$SETUP_COMPLETE" ]; then
+            echo "Setup completion marker found (set $SETUP_COMPLETE). allow_auto_merge, delete_branch_on_merge, Dependabot automated security fixes, and CodeQL's extended language list were all confirmed by setup-repo.sh/.ps1 before it set this marker as its last action."
+          else
+            echo "::error::The VUEJS_TEMPLATE_SETUP_COMPLETE repository variable is not set. GITHUB_TOKEN cannot read allow_auto_merge, delete_branch_on_merge, Dependabot automated security fixes, or CodeQL's language list without admin rights, so this workflow relies on this marker instead of reading them directly."
+            exit 1
+          fi
 
       - name: Fail loudly if anything needs a manual step
         if: >-
           steps.pages.outcome == 'failure' ||
           steps.ruleset.outcome == 'failure' ||
-          steps.settings.outcome == 'failure' ||
-          steps.secfixes.outcome == 'failure' ||
-          steps.codeql-langs.outcome == 'failure'
+          steps.visibility.outcome == 'failure' ||
+          steps.setup-complete.outcome == 'failure'
         run: |
-          echo "::error::This workflow run is being marked FAILED on purpose: at least one repository setting needs a human to finish it (GITHUB_TOKEN can never manage repository administration — see the permissions: comment above). Run this one command, as yourself:"
-          echo "::error::./scripts/setup-repo.sh   (or scripts/setup-repo.ps1 on Windows) — requires 'gh auth login' once, if you have not already."
+          echo "::error::This workflow run is being marked FAILED on purpose: repository setup is not complete yet (GITHUB_TOKEN can never manage repository administration -- see the comment at the top of this file). Run this one command, as yourself:"
+          echo "::error::./scripts/setup-repo.sh   (or scripts/setup-repo.ps1 on Windows) -- requires 'gh auth login' once, if you have not already."
           echo "::error::Then re-run this workflow from the Actions tab to confirm everything is now in place."
           exit 1
