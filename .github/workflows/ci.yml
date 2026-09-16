@@ -46,7 +46,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run lint
+      # lint:ci is the non-fixing, non-cached variant. `npm run lint` (with
+      # --fix) is for developers; running it here would silently repair the
+      # runner's working copy and report green regardless of what was
+      # actually committed.
+      - run: npm run lint:ci
 
   test:
     name: Test

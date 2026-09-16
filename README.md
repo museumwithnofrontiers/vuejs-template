@@ -56,14 +56,18 @@ setting it up (this takes under a minute):
    you can merge your own pull request — no one else needs to approve it.
    This scan is not a workflow in this repository — the
    `museumwithnofrontiers` organization runs it automatically for every
-   repository ("default setup"), and individual repositories cannot turn it
-   off or replace it with their own. As shipped, it scans your GitHub
-   Actions workflow files, not your Vue/JavaScript code — if you want it to
-   scan your application code too, ask an organization owner to add
-   JavaScript/TypeScript to the organization's default code-scanning
-   configuration (Organization Settings → Code security → Configurations).
-   A repository admin cannot do this themselves; the API explicitly refuses
-   with "controlled by organization administrators."
+   repository ("default setup"), and repositories cannot turn it off or
+   replace it with their own custom workflow (that part really is locked to
+   organization owners). As shipped, it only scans your GitHub Actions
+   workflow files, not your Vue/JavaScript code. The "Bootstrap repository
+   settings" workflow already tries to extend it to your application code
+   for you (an ordinary repository-admin action, nothing organization-owner
+   only) — if that step needed the one-line manual fallback, its command is
+   in the workflow's log, and also here:
+   ```
+   gh api -X PATCH repos/<owner>/<repo>/code-scanning/default-setup -f state=configured -f query_suite=extended -F 'languages[]=actions' -F 'languages[]=javascript-typescript'
+   ```
+   It takes about a minute to take effect.
 5. Merging into `main` automatically builds and publishes your site to
    GitHub Pages.
 

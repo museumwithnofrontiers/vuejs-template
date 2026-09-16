@@ -17,15 +17,21 @@ name: Bootstrap repository settings
 # organization enforces an org-wide CodeQL "default setup" that every new
 # repository gets automatically (confirmed empirically: a brand-new repo
 # already had `code-scanning/default-setup` in state "configured" before
-# this workflow ever ran) and that setting cannot be changed by a repo, or
-# even by a repo admin's token — the API refuses with "Code scanning default
-# setup cannot be modified. This setting is controlled by organization
-# administrators." GitHub also refuses to accept results from a custom
-# ("advanced") CodeQL workflow while default setup is enabled for the repo
-# ("CodeQL analyses from advanced configurations cannot be processed when
-# the default setup is enabled") — confirmed by actually running one and
-# watching it fail. So this template does not ship one; the required check
-# below is the default setup's own check run instead. See README.md.
+# this workflow ever ran). *Disabling* it, or switching a repo to a custom
+# ("advanced") workflow instead, is org-locked — the API refuses with "Code
+# scanning default setup cannot be modified. This setting is controlled by
+# organization administrators.", and GitHub separately refuses to accept
+# results from an advanced workflow while default setup stays on ("CodeQL
+# analyses from advanced configurations cannot be processed when the default
+# setup is enabled") — both confirmed by actually hitting them. So this
+# template does not ship a codeql.yml; the required check below is the
+# default setup's own check run instead.
+#
+# *Extending* default setup's language list, by contrast, is an ordinary
+# repo-admin operation, not org-locked — confirmed empirically (see the
+# "Extend CodeQL" step). As shipped, default setup only scans this repo's
+# GitHub Actions workflow files ("actions"); that step adds
+# javascript-typescript so it scans the application code too. See README.md.
 on:
   push:
     branches: [main]
@@ -37,10 +43,13 @@ permissions:
   # `gh workflow run` returned "Unexpected value 'administration'"). There is
   # no way to grant GITHUB_TOKEN repo-administration scope from workflow
   # YAML, at any permission level. So the steps below that need it (creating
-  # the ruleset, enabling Pages) are attempted anyway and will most likely
-  # fail with 403 — each one falls back to printing the one-line `gh`
-  # command to run by hand. See README.md.
+  # the ruleset, enabling Pages, repo settings, Dependabot security updates)
+  # are attempted anyway and will most likely fail with 403 — each one falls
+  # back to printing the one-line `gh` command to run by hand. See README.md.
+  # security-events: write is a real, grantable scope (unlike
+  # administration) and is enough for the CodeQL-language step below.
   pages: write
+  security-events: write
   contents: read
 
 concurrency:
@@ -128,7 +137,10 @@ jobs:
         id: settings
         continue-on-error: true
         run: |
-          if gh api -X PATCH "repos/$REPO" -f allow_auto_merge=true -F delete_branch_on_merge=true >/dev/null; then
+          current=$(gh api "repos/$REPO" --jq '"\(.allow_auto_merge) \(.delete_branch_on_merge)"')
+          if [ "$current" = "true true" ]; then
+            echo "allow_auto_merge and delete_branch_on_merge are already enabled — nothing to do."
+          elif gh api -X PATCH "repos/$REPO" -f allow_auto_merge=true -F delete_branch_on_merge=true >/dev/null; then
             echo "allow_auto_merge and delete_branch_on_merge enabled."
           else
             echo "::error::Could not update repository settings via the API. Enable yourself:"
@@ -140,11 +152,30 @@ jobs:
         id: secfixes
         continue-on-error: true
         run: |
-          if gh api -X PUT "repos/$REPO/automated-security-fixes" >/dev/null; then
+          if gh api "repos/$REPO/automated-security-fixes" --jq '.enabled' 2>/dev/null | grep -q true; then
+            echo "Dependabot automated security fixes are already enabled — nothing to do."
+          elif gh api -X PUT "repos/$REPO/automated-security-fixes" >/dev/null; then
             echo "Dependabot automated security fixes enabled."
           else
             echo "::error::Could not enable Dependabot security updates via the API. Enable yourself:"
             echo "::error::gh api -X PUT repos/$REPO/automated-security-fixes"
+            exit 1
+          fi
+
+      - name: Extend CodeQL to also scan the application's JavaScript/TypeScript
+        id: codeql-langs
+        continue-on-error: true
+        run: |
+          current=$(gh api "repos/$REPO/code-scanning/default-setup" --jq '.languages | index("javascript-typescript") != null' 2>/dev/null || echo false)
+          if [ "$current" = "true" ]; then
+            echo "Default setup already scans javascript-typescript — nothing to do."
+          elif gh api -X PATCH "repos/$REPO/code-scanning/default-setup" \
+                 -f state=configured -f query_suite=extended \
+                 -F 'languages[]=actions' -F 'languages[]=javascript-typescript' >/dev/null; then
+            echo "CodeQL default setup extended to scan javascript-typescript too (can take about a minute to take effect)."
+          else
+            echo "::error::Could not extend CodeQL's language coverage via the API. Run yourself (ordinary repo-admin rights, no org owner needed):"
+            echo "::error::gh api -X PATCH repos/$REPO/code-scanning/default-setup -f state=configured -f query_suite=extended -F 'languages[]=actions' -F 'languages[]=javascript-typescript'"
             exit 1
           fi
 
@@ -165,7 +196,8 @@ jobs:
           steps.pages.outcome == 'failure' ||
           steps.ruleset.outcome == 'failure' ||
           steps.settings.outcome == 'failure' ||
-          steps.secfixes.outcome == 'failure'
+          steps.secfixes.outcome == 'failure' ||
+          steps.codeql-langs.outcome == 'failure'
         run: |
           echo "::error::This workflow run is being marked FAILED on purpose: at least one repository setting could not be configured automatically (GITHUB_TOKEN cannot manage repository administration — see the permissions: comment above) and needs the one-line command printed earlier in this log. Scroll up to the red ::error:: lines above, run the command(s) they show, then re-run this workflow from the Actions tab to confirm."
           exit 1
