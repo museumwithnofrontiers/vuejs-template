@@ -32,7 +32,7 @@ setting it up (this takes under a minute):
 GitHub does not let a repository's own built-in automation change that
 repository's *settings* (branch protection, Pages, Dependabot, and so on —
 see "Why some things need a manual step" below). So the very first run of
-the "Bootstrap repository settings" workflow almost always ends **red** in
+the "Verify repository settings" workflow almost always ends **red** in
 the **Actions** tab — that is expected, not a broken template. It is a
 to-do list, not a failure: scroll to the bottom of its log for the one
 command it needs a human to run.
@@ -44,19 +44,30 @@ command it needs a human to run.
   requests can never be merged, because that scan is the one check required
   to merge. Fix it in **Settings → General → Danger Zone → Change repository
   visibility**.
-- **Run the setup script once, as yourself:**
+- **Clone your new repository, then run the setup script once, as
+  yourself.** This needs the [GitHub CLI](https://cli.github.com/) (`gh`)
+  and [git](https://git-scm.com/), both logged in / configured, and a user
+  with admin rights on the new repository (`gh auth login`, once, if you
+  have not already):
   ```sh
+  gh repo clone <your-org-or-username>/<your-repo-name>
+  cd <your-repo-name>
   ./scripts/setup-repo.sh          # macOS/Linux/WSL/Git Bash
   ./scripts/setup-repo.ps1         # Windows PowerShell
   ```
-  This needs the [GitHub CLI](https://cli.github.com/) (`gh`), logged in as
-  a user with admin rights on the new repository (`gh auth login`, once,
-  if you have not already). It never touches or stores a token of its own —
-  every command it runs uses your own `gh` session — and it is safe to run
-  more than once: it checks what is already in place before changing
-  anything, and just tells you so.
-- If the **Actions** tab shows "Bootstrap repository settings" did not run
+  This never touches or stores a token of its own — every command it runs
+  uses your own `gh` session — and it is safe to run more than once: it
+  checks what is already in place before changing anything, and just tells
+  you so.
+- If the **Actions** tab shows "Verify repository settings" did not run
   automatically at all, open it and click **Run workflow** once.
+- **Publish your site.** Enabling Pages during setup does not by itself
+  publish anything — the **Deploy** workflow run that GitHub kicked off
+  when your repository was created ran *before* Pages existed, so it
+  failed. Open the **Actions** tab, select **Deploy**, and click **Run
+  workflow** once (it supports `workflow_dispatch`, so this works without
+  pushing a commit). After that, every future merge to `main` publishes
+  automatically — this one manual run is only needed the first time.
 
 ### Why some things need a manual step
 

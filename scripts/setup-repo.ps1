@@ -103,6 +103,19 @@ if ($defaultSetup.languages -contains "javascript-typescript") {
     Write-Host "[CodeQL]       extended to scan javascript-typescript too (takes about a minute to take effect)."
 }
 
+# Last step, on purpose: reaching this line means every step above already
+# succeeded ($ErrorActionPreference = "Stop" aborts the script on the first
+# failure). The "Verify repository settings" workflow
+# (.github/workflows/bootstrap.yml) cannot read allow_auto_merge,
+# delete_branch_on_merge, Dependabot's security-fixes setting, or CodeQL's
+# language list under GITHUB_TOKEN -- three of those reads 403 outright, and
+# the other two fields are silently omitted from the API response for a
+# non-admin reader even when true. This marker stands in for all three so
+# that workflow can tell "verified done" from "never run".
+$timestamp = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+gh variable set VUEJS_TEMPLATE_SETUP_COMPLETE --body "$timestamp" *>$null
+Write-Host "[Marker]       VUEJS_TEMPLATE_SETUP_COMPLETE repository variable set."
+
 Write-Host ""
 Write-Host "Done. If your repository is private, note that CodeQL only runs on"
 Write-Host "public repositories on this organization's GitHub Free plan -- make it"

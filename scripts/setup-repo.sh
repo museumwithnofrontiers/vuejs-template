@@ -91,6 +91,17 @@ else
   echo "[CodeQL]       extended to scan javascript-typescript too (takes about a minute to take effect)."
 fi
 
+# Last step, on purpose: reaching this line means every step above already
+# succeeded (set -e aborts the script on the first failure). The "Verify
+# repository settings" workflow (.github/workflows/bootstrap.yml) cannot
+# read allow_auto_merge, delete_branch_on_merge, Dependabot's security-fixes
+# setting, or CodeQL's language list under GITHUB_TOKEN -- three of those
+# reads 403 outright, and the other two fields are silently omitted from the
+# API response for a non-admin reader even when true. This marker stands in
+# for all three so that workflow can tell "verified done" from "never run".
+gh variable set VUEJS_TEMPLATE_SETUP_COMPLETE --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null
+echo "[Marker]       VUEJS_TEMPLATE_SETUP_COMPLETE repository variable set."
+
 echo
 echo "Done. If your repository is private, note that CodeQL only runs on"
 echo "public repositories on this organization's GitHub Free plan -- make it"
