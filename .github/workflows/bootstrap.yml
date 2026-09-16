@@ -1,0 +1,128 @@
+name: Bootstrap repository settings
+
+# A repository created from this template inherits FILES ONLY. Branch
+# rulesets, Pages enablement, auto-merge and Dependabot security updates are
+# repository *settings*, which "Use this template" does not copy. This
+# workflow configures them via the API using the built-in GITHUB_TOKEN, so a
+# developer who is not comfortable with git setup does not have to.
+#
+# It is idempotent: safe to re-run, and each step is a no-op if the setting
+# is already in place. It runs automatically on the first push (the commit
+# "Use this template" creates on a new repository), and can be re-run any
+# time from the Actions tab ("Run workflow") — for example if GITHUB_TOKEN
+# could not perform a step and you fixed it by hand and want to confirm the
+# rest still applies cleanly.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  administration: write
+  pages: write
+  contents: read
+
+concurrency:
+  group: bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    # Never touch the template repository's own settings.
+    if: ${{ !endsWith(github.repository, '/vuejs-template') }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Enable GitHub Pages (built by this repo's own workflow)
+        run: |
+          if gh api "repos/$REPO/pages" >/dev/null 2>&1; then
+            echo "Pages is already enabled — nothing to do."
+          elif gh api -X POST "repos/$REPO/pages" -f build_type=workflow >/dev/null 2>&1; then
+            echo "Pages enabled with build_type=workflow."
+          else
+            echo "::error::Could not enable GitHub Pages via the API — GITHUB_TOKEN lacks permission here. Enable it yourself with one command:"
+            echo "::error::gh api -X POST repos/$REPO/pages -f build_type=workflow"
+            echo "manual_pages=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create the main branch ruleset
+        run: |
+          existing_id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name=="main-requires-pr") | .id' 2>/dev/null || true)
+          if [ -n "$existing_id" ]; then
+            echo "Ruleset 'main-requires-pr' already exists (id $existing_id) — nothing to do."
+            exit 0
+          fi
+          cat > /tmp/ruleset.json <<'JSON'
+          {
+            "name": "main-requires-pr",
+            "target": "branch",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] }
+            },
+            "rules": [
+              { "type": "deletion" },
+              { "type": "non_fast_forward" },
+              {
+                "type": "pull_request",
+                "parameters": {
+                  "required_approving_review_count": 0,
+                  "dismiss_stale_reviews_on_push": false,
+                  "required_reviewers": [],
+                  "require_code_owner_review": false,
+                  "dismissal_restriction": { "enabled": false, "allowed_actors": [] },
+                  "require_last_push_approval": false,
+                  "required_review_thread_resolution": false,
+                  "require_extra_approval_for_unattributed_changes": false,
+                  "allowed_merge_methods": ["merge", "squash", "rebase"]
+                }
+              },
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "required_status_checks": [
+                    { "context": "CodeQL", "integration_id": 15368 }
+                  ]
+                }
+              }
+            ]
+          }
+          JSON
+          if gh api -X POST "repos/$REPO/rulesets" --input /tmp/ruleset.json >/dev/null; then
+            echo "Ruleset 'main-requires-pr' created: no direct pushes, PR required, no review required, CodeQL required, force-push and deletion blocked."
+          else
+            echo "::error::Could not create the branch ruleset via the API — GITHUB_TOKEN lacks permission here. Create it yourself:"
+            echo "::error::gh api -X POST repos/$REPO/rulesets --input ruleset.json   (see the JSON in .github/workflows/bootstrap.yml, or README.md)"
+          fi
+
+      - name: Enable auto-merge and delete-branch-on-merge
+        run: |
+          if gh api -X PATCH "repos/$REPO" -f allow_auto_merge=true -F delete_branch_on_merge=true >/dev/null; then
+            echo "allow_auto_merge and delete_branch_on_merge enabled."
+          else
+            echo "::error::Could not update repository settings via the API. Enable yourself:"
+            echo "::error::gh api -X PATCH repos/$REPO -f allow_auto_merge=true -F delete_branch_on_merge=true"
+          fi
+
+      - name: Enable Dependabot security updates
+        run: |
+          if gh api -X PUT "repos/$REPO/automated-security-fixes" >/dev/null; then
+            echo "Dependabot automated security fixes enabled."
+          else
+            echo "::error::Could not enable Dependabot security updates via the API. Enable yourself:"
+            echo "::error::gh api -X PUT repos/$REPO/automated-security-fixes"
+          fi
+
+      - name: Verify visibility (CodeQL requires a public repo on this plan)
+        run: |
+          private=$(gh api "repos/$REPO" --jq .private)
+          if [ "$private" = "true" ]; then
+            echo "::error::This repository is PRIVATE. On the museumwithnofrontiers organization's GitHub Free plan, CodeQL code scanning only runs on PUBLIC repositories. CodeQL is the only required check on main, so pull requests will NEVER be mergeable until this repository is public. Fix it with:"
+            echo "::error::gh api -X PATCH repos/$REPO -f private=false"
+            echo "::error::(or Settings > General > Danger Zone > Change visibility). Everything else this workflow configured is still in place — re-run this workflow after switching to public if you want it to re-verify."
+            exit 1
+          fi
+          echo "Repository is public — CodeQL will run and can satisfy the required check."

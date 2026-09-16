@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Minor and patch bumps only — majors are ignored and wait for a human.
+  # Green Dependabot PRs auto-merge automatically (see
+  # .github/workflows/dependabot-automerge.yml) once CodeQL reports.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

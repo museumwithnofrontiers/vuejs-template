@@ -1,0 +1,73 @@
+name: CI
+
+# Every job here is intentionally informational, not a merge gate: each has
+# its own job so one red check never hides another, and none of them is
+# listed in the branch ruleset's required status checks. CodeQL (see
+# codeql.yml) is the only required check. See README.md for why.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm audit
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build -- --base=/${{ github.event.repository.name }}/
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check for a test script
+        id: check
+        run: |
+          if node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)"; then
+            echo "has_tests=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_tests=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run tests
+        if: steps.check.outputs.has_tests == 'true'
+        run: npm test
+      - name: No tests configured
+        if: steps.check.outputs.has_tests != 'true'
+        run: echo "No \"test\" script in package.json — skipping cleanly."

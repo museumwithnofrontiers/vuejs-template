@@ -1,0 +1,23 @@
+name: Dependabot auto-merge
+
+# dependabot.yml only ever raises PRs for minor/patch bumps (majors are
+# ignored there), so any PR opened by Dependabot here is safe to auto-merge
+# once checks report. This only enables GitHub's built-in auto-merge on the
+# PR — it still waits for the required CodeQL check, same as a human's PR.
+on:
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable auto-merge for this Dependabot PR
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

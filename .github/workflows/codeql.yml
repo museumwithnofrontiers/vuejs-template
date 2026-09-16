@@ -1,0 +1,33 @@
+name: CodeQL
+
+# This is the ONLY required status check on main (see the branch ruleset).
+# It must run on every pull request with no path filters, or it would
+# sometimes not report at all and block merges forever. Note: on GitHub
+# Free, code scanning (and therefore this check) only runs on PUBLIC
+# repositories — see README.md.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    # This exact string is the required status check context registered in
+    # the branch ruleset ({"context":"CodeQL","integration_id":15368}).
+    # Renaming this job requires updating the ruleset to match.
+    name: CodeQL
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript-typescript"
