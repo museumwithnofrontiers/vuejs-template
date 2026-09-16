@@ -91,14 +91,55 @@ else
   echo "[CodeQL]       extended to scan javascript-typescript too (takes about a minute to take effect)."
 fi
 
-# Last step, on purpose: reaching this line means every step above already
-# succeeded (set -e aborts the script on the first failure). The "Verify
-# repository settings" workflow (.github/workflows/bootstrap.yml) cannot
-# read allow_auto_merge, delete_branch_on_merge, Dependabot's security-fixes
+# Last step, on purpose -- and not a rubber stamp. set -e aborts on the
+# first real failure above, but a step could still have silently no-opped
+# against a state that was misread, so before promising anything we re-read
+# all six settings fresh and check them for real. The "Verify repository
+# settings" workflow (.github/workflows/bootstrap.yml) cannot read
+# allow_auto_merge, delete_branch_on_merge, Dependabot's security-fixes
 # setting, or CodeQL's language list under GITHUB_TOKEN -- three of those
 # reads 403 outright, and the other two fields are silently omitted from the
 # API response for a non-admin reader even when true. This marker stands in
-# for all three so that workflow can tell "verified done" from "never run".
+# for all three so that workflow can tell "verified done" from "never run"
+# -- so it must only be written when every assertion below actually passes.
+echo
+echo "Verifying final state before marking setup complete ..."
+
+failures=()
+
+if ! gh api "repos/$REPO/pages" >/dev/null 2>&1; then
+  failures+=("Pages is not enabled.")
+fi
+
+if [ -z "$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name=="main-requires-pr") | .id')" ]; then
+  failures+=("Ruleset 'main-requires-pr' is missing.")
+fi
+
+current=$(gh api "repos/$REPO" --jq '"\(.allow_auto_merge) \(.delete_branch_on_merge)"')
+if [ "$current" != "true true" ]; then
+  failures+=("allow_auto_merge and/or delete_branch_on_merge is not enabled.")
+fi
+
+if ! gh api "repos/$REPO/automated-security-fixes" --jq '.enabled' 2>/dev/null | grep -q true; then
+  failures+=("Dependabot security updates are not enabled.")
+fi
+
+has_js_final=$(gh api "repos/$REPO/code-scanning/default-setup" --jq '.languages | index("javascript-typescript") != null' 2>/dev/null || echo false)
+if [ "$has_js_final" != "true" ]; then
+  failures+=("CodeQL default setup does not include javascript-typescript.")
+fi
+
+if [ "${#failures[@]}" -gt 0 ]; then
+  echo
+  echo "ERROR: setup is not actually complete -- refusing to set the completion marker:"
+  for f in "${failures[@]}"; do
+    echo "  - $f"
+  done
+  echo
+  echo "Re-run this script after checking the messages above."
+  exit 1
+fi
+
 gh variable set VUEJS_TEMPLATE_SETUP_COMPLETE --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null
 echo "[Marker]       VUEJS_TEMPLATE_SETUP_COMPLETE repository variable set."
 
