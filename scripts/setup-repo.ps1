@@ -155,21 +155,33 @@ $defaultSetup = Invoke-GhRequired @('api', "repos/$Repo/code-scanning/default-se
 if ($defaultSetup.languages -contains "javascript-typescript") {
     Write-Host "[CodeQL]       already scans javascript-typescript -- nothing to do."
 } else {
-    Invoke-GhRequired @('api', '-X', 'PATCH', "repos/$Repo/code-scanning/default-setup", '-f', 'state=configured', '-f', 'query_suite=extended', '-F', 'languages[]=actions', '-F', 'languages[]=javascript-typescript') | Out-Null
-    Write-Host "[CodeQL]       extended to scan javascript-typescript too (takes about a minute to take effect)."
+    # Deliberately tolerant, unlike every other call in this script: on a
+    # freshly created repo the organization's own CodeQL default setup is
+    # busy auto-detecting languages at the same time, and GitHub answers
+    # this PATCH with a conflict while that's in flight. That isn't this
+    # script doing anything wrong, so it must not abort the run -- the
+    # final assertion loop below re-reads the language list for real and
+    # waits for it, so it alone decides whether the run succeeded.
+    $codeqlPatch = Invoke-GhCheck @('api', '-X', 'PATCH', "repos/$Repo/code-scanning/default-setup", '-f', 'state=configured', '-f', 'query_suite=extended', '-F', 'languages[]=actions', '-F', 'languages[]=javascript-typescript')
+    if ($codeqlPatch.Success) {
+        Write-Host "[CodeQL]       extended to scan javascript-typescript too (takes about a minute to take effect)."
+    } else {
+        Write-Host "[CodeQL]       could not update the scan configuration right now -- the organization's own scan setup may be updating this repository at the same time; the final check below will wait for it."
+    }
 }
 
 # Last step, on purpose -- and not a rubber stamp. The steps above can fail
-# partway (a real gh error now aborts immediately, per the helpers above,
-# but a step could also have silently no-opped against a state we
-# misread), so before promising anything we re-read all six settings fresh
-# and check them for real. GitHub's API can also legitimately still be
-# catching up with a change this very script just made a moment ago
-# (CodeQL's language list, extended above, is the one this repeatedly shows
-# up on) -- that isn't a failure, so the check below keeps re-reading for a
-# while before it gives up, rather than condemning a run that actually did
-# everything right. The "Verify repository settings" workflow
-# (.github/workflows/bootstrap.yml) cannot read allow_auto_merge,
+# partway (a real gh error aborts immediately, per the helpers above --
+# except the CodeQL PATCH, which is deliberately tolerant of failure, see
+# the comment at that call -- and a step could also have silently no-opped
+# against a state we misread), so before promising anything we re-read all
+# six settings fresh and check them for real. GitHub's API can also
+# legitimately still be catching up with a change this very script just made
+# a moment ago (CodeQL's language list, extended above, is the one this
+# repeatedly shows up on) -- that isn't a failure, so the check below keeps
+# re-reading for a while before it gives up, rather than condemning a run
+# that actually did everything right. The "Verify repository settings"
+# workflow (.github/workflows/bootstrap.yml) cannot read allow_auto_merge,
 # delete_branch_on_merge, Dependabot's security-fixes setting, or CodeQL's
 # language list under GITHUB_TOKEN -- three of those reads 403 outright, and
 # the other two fields are silently omitted from the API response for a
