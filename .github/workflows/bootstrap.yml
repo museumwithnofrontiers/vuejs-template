@@ -43,11 +43,13 @@ permissions:
   # `gh workflow run` returned "Unexpected value 'administration'"). There is
   # no way to grant GITHUB_TOKEN repo-administration scope from workflow
   # YAML, at any permission level. So the steps below that need it (creating
-  # the ruleset, enabling Pages, repo settings, Dependabot security updates)
-  # are attempted anyway and will most likely fail with 403 — each one falls
-  # back to printing the one-line `gh` command to run by hand. See README.md.
-  # security-events: write is a real, grantable scope (unlike
-  # administration) and is enough for the CodeQL-language step below.
+  # the ruleset, enabling Pages, repo settings, Dependabot security updates,
+  # extending CodeQL's languages) are attempted anyway and will most likely
+  # fail with 403 — if any of them do, the last step points you at
+  # scripts/setup-repo.sh (or .ps1), which does all of the same things as
+  # yourself instead, in one command. security-events: write is a real,
+  # grantable scope (unlike administration) and is enough for the
+  # CodeQL-language step to at least try.
   pages: write
   security-events: write
   contents: read
@@ -74,8 +76,7 @@ jobs:
           elif gh api -X POST "repos/$REPO/pages" -f build_type=workflow >/dev/null 2>&1; then
             echo "Pages enabled with build_type=workflow."
           else
-            echo "::error::Could not enable GitHub Pages via the API — GITHUB_TOKEN lacks permission here. Enable it yourself with one command:"
-            echo "::error::gh api -X POST repos/$REPO/pages -f build_type=workflow"
+            echo "::error::Could not enable GitHub Pages — GITHUB_TOKEN lacks permission here (expected, see README.md)."
             exit 1
           fi
 
@@ -128,8 +129,7 @@ jobs:
           if gh api -X POST "repos/$REPO/rulesets" --input /tmp/ruleset.json >/dev/null; then
             echo "Ruleset 'main-requires-pr' created: no direct pushes, PR required, no review required, CodeQL required, force-push and deletion blocked."
           else
-            echo "::error::Could not create the branch ruleset via the API — GITHUB_TOKEN lacks permission here. Create it yourself:"
-            echo "::error::gh api -X POST repos/$REPO/rulesets --input ruleset.json   (see the JSON in .github/workflows/bootstrap.yml, or README.md)"
+            echo "::error::Could not create the branch ruleset — GITHUB_TOKEN lacks permission here (expected, see README.md)."
             exit 1
           fi
 
@@ -143,8 +143,7 @@ jobs:
           elif gh api -X PATCH "repos/$REPO" -f allow_auto_merge=true -F delete_branch_on_merge=true >/dev/null; then
             echo "allow_auto_merge and delete_branch_on_merge enabled."
           else
-            echo "::error::Could not update repository settings via the API. Enable yourself:"
-            echo "::error::gh api -X PATCH repos/$REPO -f allow_auto_merge=true -F delete_branch_on_merge=true"
+            echo "::error::Could not update repository settings — GITHUB_TOKEN lacks permission here (expected, see README.md)."
             exit 1
           fi
 
@@ -157,8 +156,7 @@ jobs:
           elif gh api -X PUT "repos/$REPO/automated-security-fixes" >/dev/null; then
             echo "Dependabot automated security fixes enabled."
           else
-            echo "::error::Could not enable Dependabot security updates via the API. Enable yourself:"
-            echo "::error::gh api -X PUT repos/$REPO/automated-security-fixes"
+            echo "::error::Could not enable Dependabot security updates — GITHUB_TOKEN lacks permission here (expected, see README.md)."
             exit 1
           fi
 
@@ -174,8 +172,7 @@ jobs:
                  -F 'languages[]=actions' -F 'languages[]=javascript-typescript' >/dev/null; then
             echo "CodeQL default setup extended to scan javascript-typescript too (can take about a minute to take effect)."
           else
-            echo "::error::Could not extend CodeQL's language coverage via the API. Run yourself (ordinary repo-admin rights, no org owner needed):"
-            echo "::error::gh api -X PATCH repos/$REPO/code-scanning/default-setup -f state=configured -f query_suite=extended -F 'languages[]=actions' -F 'languages[]=javascript-typescript'"
+            echo "::error::Could not extend CodeQL's language coverage — GITHUB_TOKEN lacks permission here (expected, see README.md)."
             exit 1
           fi
 
@@ -199,5 +196,7 @@ jobs:
           steps.secfixes.outcome == 'failure' ||
           steps.codeql-langs.outcome == 'failure'
         run: |
-          echo "::error::This workflow run is being marked FAILED on purpose: at least one repository setting could not be configured automatically (GITHUB_TOKEN cannot manage repository administration — see the permissions: comment above) and needs the one-line command printed earlier in this log. Scroll up to the red ::error:: lines above, run the command(s) they show, then re-run this workflow from the Actions tab to confirm."
+          echo "::error::This workflow run is being marked FAILED on purpose: at least one repository setting needs a human to finish it (GITHUB_TOKEN can never manage repository administration — see the permissions: comment above). Run this one command, as yourself:"
+          echo "::error::./scripts/setup-repo.sh   (or scripts/setup-repo.ps1 on Windows) — requires 'gh auth login' once, if you have not already."
+          echo "::error::Then re-run this workflow from the Actions tab to confirm everything is now in place."
           exit 1

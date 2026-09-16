@@ -1,0 +1,36 @@
+# No top-level `name:` here on purpose: Compose defaults the project name to
+# the containing directory's basename, which is already unique per checkout
+# (every repo made from this template lives in its own, differently-named
+# directory) -- that's what keeps two checkouts' containers, networks and
+# the node_modules volume below from colliding. Hardcoding a name here would
+# undo that and make every project made from this template collide with
+# every other one.
+services:
+  dev:
+    build:
+      context: .
+      args:
+        NODE_VERSION: ${NODE_VERSION:-24}
+    ports:
+      - "5173:5173"
+    volumes:
+      # Bind-mount the source for live editing...
+      - .:/app
+      # ...but keep node_modules in a named volume, not the bind mount: the
+      # host has no node_modules of its own in the Docker-only workflow, so
+      # without this the bind mount would hide the image's already-installed
+      # dependencies with an empty directory. Docker seeds a fresh named
+      # volume from the image's own content at that path on first run, so
+      # this "just works" the first time too.
+      - node_modules:/app/node_modules
+    environment:
+      # Native filesystem change events don't always reach a container
+      # reliably from a Windows host bind mount. If hot reload stops
+      # updating on file save, set this to true (e.g. in a .env file next
+      # to this one: CHOKIDAR_USEPOLLING=true) rather than leaving it on by
+      # default everywhere, where it just burns CPU for no benefit.
+      - CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING:-false}
+      - VITE_USE_POLLING=${CHOKIDAR_USEPOLLING:-false}
+
+volumes:
+  node_modules:

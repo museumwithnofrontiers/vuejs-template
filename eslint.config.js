@@ -20,6 +20,16 @@ export default defineConfig([
     },
   },
 
+  {
+    // Config and script files run under Node, not the browser.
+    files: ['*.config.js', 'scripts/**/*.{js,mjs}'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+
   js.configs.recommended,
   ...pluginVue.configs['flat/essential'],
 

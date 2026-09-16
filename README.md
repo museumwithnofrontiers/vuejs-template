@@ -24,56 +24,80 @@ setting it up (this takes under a minute):
 - **Dependabot** is turned on. It opens a pull request for minor and patch
   dependency updates (never major ones, which need a human decision), and
   those pull requests merge themselves automatically once their checks pass.
+- **CodeQL** (a security scan) is extended to cover your Vue/JavaScript
+  application code, not just your GitHub Actions workflow files.
 
 ## What you might need to click once
 
+GitHub does not let a repository's own built-in automation change that
+repository's *settings* (branch protection, Pages, Dependabot, and so on —
+see "Why some things need a manual step" below). So the very first run of
+the "Bootstrap repository settings" workflow almost always ends **red** in
+the **Actions** tab — that is expected, not a broken template. It is a
+to-do list, not a failure: scroll to the bottom of its log for the one
+command it needs a human to run.
+
 - **Make sure your repository is Public.** ("Use this template" defaults to
   the visibility you pick when creating it — pick **Public**.) This
-  organization is on GitHub's Free plan, where the security scan below only
+  organization is on GitHub's Free plan, where the CodeQL scan below only
   runs on public repositories. If your repository ends up private, pull
   requests can never be merged, because that scan is the one check required
-  to merge. If this happens, switch it in **Settings → General → Danger
-  Zone → Change repository visibility**, then re-run the "Bootstrap
-  repository settings" workflow from the **Actions** tab.
-- If the **Actions** tab shows the "Bootstrap repository settings" workflow
-  did *not* run automatically, open it and click **Run workflow** once. It
-  is safe to run more than once.
-- If any step of that workflow reports an error (rare — it means the
-  built-in token could not make a particular change), the workflow's log
-  tells you exactly which one-line command to run yourself to finish it. Ask
-  Pascal if you are unsure.
+  to merge. Fix it in **Settings → General → Danger Zone → Change repository
+  visibility**.
+- **Run the setup script once, as yourself:**
+  ```sh
+  ./scripts/setup-repo.sh          # macOS/Linux/WSL/Git Bash
+  ./scripts/setup-repo.ps1         # Windows PowerShell
+  ```
+  This needs the [GitHub CLI](https://cli.github.com/) (`gh`), logged in as
+  a user with admin rights on the new repository (`gh auth login`, once,
+  if you have not already). It never touches or stores a token of its own —
+  every command it runs uses your own `gh` session — and it is safe to run
+  more than once: it checks what is already in place before changing
+  anything, and just tells you so.
+- If the **Actions** tab shows "Bootstrap repository settings" did not run
+  automatically at all, open it and click **Run workflow** once.
+
+### Why some things need a manual step
+
+GitHub's built-in automation token (`GITHUB_TOKEN`) is deliberately never
+allowed to manage a repository's own administrative settings — no
+permission grants it that, at any level (confirmed directly: GitHub even
+rejects a workflow file that tries to request it). So a handful of settings
+that only a human — using their own GitHub login — is allowed to change:
+protecting `main`, turning on Pages, enabling auto-merge, enabling
+Dependabot's security updates, and extending the CodeQL scan to your
+application code. `scripts/setup-repo.sh` / `.ps1` does all five in one go.
 
 ## Making changes
 
 1. Create a branch (`feature/your-change`, `fix/your-change`, `chore/...` or
    `docs/...`).
 2. Commit your changes and open a pull request against `main`.
-3. Four checks run and are informational only — they can be red without
-   blocking you, but it's worth fixing them: a dependency **audit**, the
-   production **build**, **lint**, and **tests** (skipped automatically if
-   the project has none yet).
+3. Five checks run and are informational only — they can be red without
+   blocking you, but it's worth fixing them: **consistency** (the Node
+   version declared in `.nvmrc` and in `Dockerfile` still match), a
+   dependency **audit**, the production **build**, **lint**, and **tests**
+   (skipped automatically if the project has none yet).
 4. One check is required: **CodeQL**, a security scan. Once it reports,
    you can merge your own pull request — no one else needs to approve it.
    This scan is not a workflow in this repository — the
    `museumwithnofrontiers` organization runs it automatically for every
-   repository ("default setup"), and repositories cannot turn it off or
-   replace it with their own custom workflow (that part really is locked to
-   organization owners). As shipped, it only scans your GitHub Actions
-   workflow files, not your Vue/JavaScript code. The "Bootstrap repository
-   settings" workflow already tries to extend it to your application code
-   for you (an ordinary repository-admin action, nothing organization-owner
-   only) — if that step needed the one-line manual fallback, its command is
-   in the workflow's log, and also here:
-   ```
-   gh api -X PATCH repos/<owner>/<repo>/code-scanning/default-setup -f state=configured -f query_suite=extended -F 'languages[]=actions' -F 'languages[]=javascript-typescript'
-   ```
-   It takes about a minute to take effect.
+   repository ("default setup"). Only *disabling* default setup, or
+   replacing it with a custom workflow, is locked to organization owners;
+   *extending its language coverage* (so it scans your Vue/JavaScript code,
+   not just GitHub Actions workflow files) is an ordinary repository-admin
+   action — `scripts/setup-repo.sh` already does it for you as part of the
+   one-time setup above.
 5. Merging into `main` automatically builds and publishes your site to
    GitHub Pages.
 
 ## Running it locally
 
-You need [Node.js](https://nodejs.org/) installed (LTS version).
+You need [Node.js](https://nodejs.org/) installed — the version declared in
+[`.nvmrc`](.nvmrc) (currently Node 24, the current LTS). If you use
+[nvm](https://github.com/nvm-sh/nvm) or a similar tool, running `nvm use` in
+this folder picks it up automatically.
 
 ```sh
 npm install     # once, after cloning
@@ -86,6 +110,39 @@ Other useful commands:
 npm run build   # produces the production build in dist/
 npm run lint    # checks and auto-fixes code style
 ```
+
+## Running it with Docker (recommended if you don't already have Node)
+
+Nothing to install beyond [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+— the container uses the exact same Node version as CI, so "works on my
+machine" differences are far less likely.
+
+```sh
+docker compose up          # starts the dev server at http://localhost:5173
+```
+
+Edits to the source under `src/` hot-reload in the browser as usual. Other
+one-off commands, without starting the dev server:
+
+```sh
+docker compose run --rm dev npm run build
+docker compose run --rm dev npm run lint
+docker compose run --rm dev npm test
+```
+
+**Is Docker required?** No. `npm install && npm run dev` (above) is the
+faster path if you already have Node installed locally, and it is exactly
+what CI itself does. Docker is offered because it needs nothing installed
+beyond Docker Desktop itself and removes any doubt about which Node version
+or OS-level toolchain you're building with — but be aware that hot reload
+inside a container is sometimes slower than running natively, and on some
+Windows setups file-change notifications don't reach the container reliably
+(if saves stop showing up live, set `CHOKIDAR_USEPOLLING=true` — see the
+comment in `compose.yml`). Either way, what actually guarantees you get the
+same dependency versions as CI is `package-lock.json`, not Docker — Docker
+only guarantees the same *toolchain* (Node, npm), not the dependency tree,
+which `package-lock.json` already pins regardless of where `npm install`
+runs.
 
 ## Where your site appears
 
